@@ -5,6 +5,7 @@ from geometry_msgs.msg import PoseStamped
 from styx_msgs.msg import Lane, Waypoint
 
 import math
+import tf
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -30,23 +31,84 @@ class WaypointUpdater(object):
 
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
-
+        
         # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
-
+        rospy.Subscriber('/traffic_waypoint', Waypoint, self.traffic_cb)
+        rospy.Subscriber('/obstacle_waypoint', Waypoint, self.obstacle_cb)
 
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
 
         # TODO: Add other member variables you need below
+        self.px = None
+        self.py = None
+        self.yaw = None
+        self.current_waypoint_idx = None
+        self.target_velocity = 10.0
 
         rospy.spin()
 
     def pose_cb(self, msg):
         # TODO: Implement
-        pass
+        self.px = msg.pose.position.x
+        self.py = msg.pose.position.y
+        orientation = msg.pose.orientation
+        q = [orientation.x, orientation.y, orientation.z, orientation.w]
+        _, _, self.yaw = tf.transformations.euler_from_quaternion(q)
+        rospy.debug("px=%.2f, py=%.2f, yaw=%.2f", self.x, self.py, self.yaw)
+    
+    def get_dist(self, wp):
+        wx = wp.pose.pose.position.x
+        wy = wp.pose.pose.position.y
+        dx = wx - self.px
+        dy = wy - self.py
+        return dx, dy
+
+    def transform_2_local(self, wp):
+        dx, dy = self.get_dist(wp)
+        local_wx = math.cos(-self.yaw) * dx - math.sin(-self.yaw) * dy
+        local_wy = math.sin(-self.yaw) * dx - math.cos(-self.yaw) * dy
+        return local_wx, local_wy, math.atan2(local_wy, local_wx)
+
+    def is_wp_ahead(self, wp):
+        wx, wy, phi = self.transform_2_local(wp)
+        return wx > .0
+
+    def dist_2_wp(self, wp):
+        dx, dy = self.get_dist(wp)
+        return math.sqrt(dx * dx + dy * dy)
+
+    def find_closest_wp(self, msg):
+        """
+            Finds the closest waypoint to the vehicle position.
+        """
+        min_dist = 1e9
+        min_idx = None
+        for idx,wp in enumerate(msg.waypoints):
+            dist = self.dist_2_wp(wp)
+            if dist < min_dist:
+                min_dist = dist
+                min_idx = idx
+        num_wp = len(msg.waypoints)
+        closest_idx = min_idx
+        closest_wp = msg.waypoints[closest_idx]
+        if not self.is_wp_ahead(closest_wp):
+            closest_idx (closest_idx + 1) % num_wp
+        return closest_idx
 
     def waypoints_cb(self, waypoints):
-        # TODO: Implement
-        pass
+        if self.px is None:
+            return
+        lane = Lane()
+        num_wp = len(waypoints.waypoints)
+        current_idx = self.find_closest_wp(waypoints)
+        for i in range(LOOKAHEAD_WPS):
+            wp = waypoints.waypoints[current_idx]
+            nwp = Waypoint()
+            nwp.pose = wp.pose
+            nwp.twist.twist.linear.x = self.target_velocity
+            lane.waypoints.append(nwp)
+            current_idx = (current_idx + 1) % num_wp
+        self.final_waypoints_pub.publish(lane)
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
