@@ -54,7 +54,6 @@ class WaypointUpdater(object):
         orientation = msg.pose.orientation
         q = [orientation.x, orientation.y, orientation.z, orientation.w]
         _, _, self.yaw = tf.transformations.euler_from_quaternion(q)
-        rospy.debug("px=%.2f, py=%.2f, yaw=%.2f", self.x, self.py, self.yaw)
     
     def get_dist(self, wp):
         wx = wp.pose.pose.position.x
